@@ -1,9 +1,7 @@
 use crate::proto::{RecvMeta, SocketType, Transmit, UdpCapabilities};
 use async_io::Async;
-use futures_lite::future::poll_fn;
 use std::io::{IoSliceMut, Result};
 use std::net::SocketAddr;
-use std::task::{Context, Poll};
 
 #[cfg(unix)]
 use crate::unix as platform;
@@ -49,38 +47,12 @@ impl UdpSocket {
         self.inner.get_ref().set_ttl(ttl as u32)
     }
 
-    pub fn poll_send(&self, cx: &mut Context, transmits: &[Transmit]) -> Poll<Result<usize>> {
-        match self.inner.poll_writable(cx) {
-            Poll::Ready(Ok(())) => {}
-            Poll::Pending => return Poll::Pending,
-            Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
-        }
-        let socket = self.inner.get_ref();
-        match platform::send(socket, transmits) {
-            Ok(len) => Poll::Ready(Ok(len)),
-            Err(err) => Poll::Ready(Err(err)),
-        }
-    }
-
-    pub fn poll_recv(
-        &self,
-        cx: &mut Context,
-        buffers: &mut [IoSliceMut<'_>],
-        meta: &mut [RecvMeta],
-    ) -> Poll<Result<usize>> {
-        match self.inner.poll_readable(cx) {
-            Poll::Ready(Ok(())) => {}
-            Poll::Pending => return Poll::Pending,
-            Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
-        }
-        let socket = self.inner.get_ref();
-        Poll::Ready(platform::recv(socket, buffers, meta))
-    }
-
     pub async fn send(&self, transmits: &[Transmit]) -> Result<usize> {
         let mut i = 0;
         while i < transmits.len() {
-            i += poll_fn(|cx| self.poll_send(cx, &transmits[i..])).await?;
+            self.inner.writable().await?;
+            let socket = self.inner.as_ref();
+            i += platform::send(socket, &transmits[i..])?;
         }
         Ok(i)
     }
@@ -90,7 +62,9 @@ impl UdpSocket {
         buffers: &mut [IoSliceMut<'_>],
         meta: &mut [RecvMeta],
     ) -> Result<usize> {
-        poll_fn(|cx| self.poll_recv(cx, buffers, meta)).await
+        self.inner.readable().await?;
+        let socket = self.inner.get_ref();
+        platform::recv(socket, buffers, meta)
     }
 }
 
