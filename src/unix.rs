@@ -1,5 +1,7 @@
 use crate::cmsg;
 use crate::proto::{EcnCodepoint, RecvMeta, SocketType, Transmit};
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use crate::BATCH_SIZE;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
 use std::{
     io,
