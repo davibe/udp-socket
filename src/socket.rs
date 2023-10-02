@@ -1,5 +1,4 @@
 use crate::proto::{RecvMeta, SocketType, Transmit, UdpCapabilities};
-use async_io::Async;
 use std::io::{IoSliceMut, Result};
 use std::net::SocketAddr;
 
@@ -7,10 +6,11 @@ use std::net::SocketAddr;
 use crate::unix as platform;
 #[cfg(not(unix))]
 use fallback as platform;
+use tokio::io::Interest;
 
 #[derive(Debug)]
 pub struct UdpSocket {
-    inner: Async<std::net::UdpSocket>,
+    inner: tokio::net::UdpSocket,
     ty: SocketType,
 }
 
@@ -21,13 +21,11 @@ impl UdpSocket {
         })
     }
 
-    pub fn bind(addr: SocketAddr) -> Result<Self> {
-        let socket = std::net::UdpSocket::bind(addr)?;
-        let ty = platform::init(&socket)?;
-        Ok(Self {
-            inner: Async::new(socket)?,
-            ty,
-        })
+    pub async fn bind(addr: SocketAddr) -> Result<Self> {
+        let inner = tokio::net::UdpSocket::bind(addr).await?;
+        let ty = platform::init(&inner)?;
+
+        Ok(Self { inner, ty })
     }
 
     pub fn socket_type(&self) -> SocketType {
@@ -35,24 +33,27 @@ impl UdpSocket {
     }
 
     pub fn local_addr(&self) -> Result<SocketAddr> {
-        self.inner.get_ref().local_addr()
+        self.inner.local_addr()
     }
 
     pub fn ttl(&self) -> Result<u8> {
-        let ttl = self.inner.get_ref().ttl()?;
+        let ttl = self.inner.ttl()?;
         Ok(ttl as u8)
     }
 
     pub fn set_ttl(&self, ttl: u8) -> Result<()> {
-        self.inner.get_ref().set_ttl(ttl as u32)
+        self.inner.set_ttl(ttl as u32)
     }
 
     pub async fn send(&self, transmits: &[Transmit]) -> Result<usize> {
         let mut i = 0;
         while i < transmits.len() {
-            self.inner.writable().await?;
-            let socket = self.inner.as_ref();
-            i += platform::send(socket, &transmits[i..])?;
+            i += self
+                .inner
+                .async_io(Interest::WRITABLE, || {
+                    platform::send(&self.inner, &transmits[i..])
+                })
+                .await?
         }
         Ok(i)
     }
@@ -62,9 +63,11 @@ impl UdpSocket {
         buffers: &mut [IoSliceMut<'_>],
         meta: &mut [RecvMeta],
     ) -> Result<usize> {
-        self.inner.readable().await?;
-        let socket = self.inner.get_ref();
-        platform::recv(socket, buffers, meta)
+        self.inner
+            .async_io(Interest::READABLE, || {
+                platform::recv(&self.inner, buffers, meta)
+            })
+            .await
     }
 }
 

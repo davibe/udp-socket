@@ -2,12 +2,20 @@ use anyhow::Result;
 use std::io::IoSliceMut;
 use std::net::Ipv4Addr;
 use std::time::Instant;
+use tokio;
 use udp_socket::{EcnCodepoint, RecvMeta, Transmit, UdpSocket, BATCH_SIZE};
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     env_logger::init();
-    let socket1 = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0).into())?;
-    let socket2 = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0).into())?;
+
+    let socket1 = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0).into())
+        .await
+        .expect("socket");
+    let socket2 = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0).into())
+        .await
+        .expect("socket2");
+
     let addr2 = socket2.local_addr()?;
 
     let mut transmits = Vec::with_capacity(BATCH_SIZE);
@@ -22,13 +30,13 @@ fn main() -> Result<()> {
         });
     }
 
-    let task1 = async_global_executor::spawn(async move {
+    let task1 = tokio::spawn(async move {
         log::debug!("before send");
         socket1.send(&transmits).await.unwrap();
         log::debug!("after send");
     });
 
-    let task2 = async_global_executor::spawn(async move {
+    let task2 = tokio::spawn(async move {
         let mut storage = [[0u8; 1200]; BATCH_SIZE];
         let mut buffers = Vec::with_capacity(BATCH_SIZE);
         let mut rest = &mut storage[..];
@@ -50,16 +58,14 @@ fn main() -> Result<()> {
         }
     });
 
-    async_global_executor::block_on(async move {
-        let start = Instant::now();
-        task1.await;
-        task2.await;
-        println!(
-            "sent {} packets in {}ms",
-            BATCH_SIZE,
-            start.elapsed().as_millis()
-        );
-    });
+    let start = Instant::now();
+    task1.await?;
+    task2.await?;
+    println!(
+        "sent {} packets in {}ms",
+        BATCH_SIZE,
+        start.elapsed().as_millis()
+    );
 
     Ok(())
 }

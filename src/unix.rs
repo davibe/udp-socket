@@ -7,10 +7,12 @@ use std::{
     io,
     io::IoSliceMut,
     mem::{self, MaybeUninit},
-    net::{IpAddr, SocketAddr, UdpSocket},
+    net::{IpAddr, SocketAddr},
     os::unix::io::AsRawFd,
     ptr,
 };
+
+use tokio::net::UdpSocket;
 
 #[cfg(target_os = "freebsd")]
 type IpTosTy = libc::c_uchar;
@@ -452,7 +454,7 @@ pub fn max_gso_segments() -> io::Result<usize> {
     // Checks whether GSO support is availably by setting the UDP_SEGMENT
     // option on a socket.
     const GSO_SIZE: libc::c_int = 1500;
-    let socket = UdpSocket::bind("[::]:0")?;
+    let socket = std::net::UdpSocket::bind("[::]:0")?;
     let res = unsafe {
         libc::setsockopt(
             socket.as_raw_fd(),
